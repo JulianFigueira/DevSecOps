@@ -1,71 +1,55 @@
-"""
-Aplicacion de ejemplo para el TPI de DevSecOps (ASI 2026 - UTN FRLP).
-Version CORREGIDA: sin las vulnerabilidades intencionales.
-"""
 import os
 import sqlite3
-
-from flask import Flask, jsonify, request
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# [FIX 1] El secreto se lee de una variable de entorno, no del codigo
-ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN")
+def init_db():
+    conn = sqlite3.connect(':memory:', check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS productos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL,
+            precio REAL NOT NULL
+        )
+    ''')
+    cursor.execute("INSERT INTO productos (nombre, precio) VALUES ('Laptop', 1200.0)")
+    cursor.execute("INSERT INTO productos (nombre, precio) VALUES ('Mouse', 25.0)")
+    cursor.execute("INSERT INTO productos (nombre, precio) VALUES ('Teclado', 45.0)")
+    conn.commit()
+    return conn
 
-db = sqlite3.connect(":memory:", check_same_thread=False)
-db.execute("CREATE TABLE productos (id INTEGER PRIMARY KEY, nombre TEXT, precio REAL)")
-db.executemany(
-    "INSERT INTO productos (nombre, precio) VALUES (?, ?)",
-    [("Teclado", 25000), ("Mouse", 12000), ("Monitor", 180000), ("Notebook", 950000)],
-)
-db.commit()
+# Inicializar base de datos en memoria
+db_conn = init_db()
 
-
-@app.after_request
-def cabeceras_de_seguridad(respuesta):
-    # Extra: cabeceras de seguridad (reduce las alertas de ZAP)
-    respuesta.headers["X-Content-Type-Options"] = "nosniff"
-    respuesta.headers["X-Frame-Options"] = "DENY"
-    respuesta.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'"
-    respuesta.headers["Referrer-Policy"] = "no-referrer"
-    respuesta.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
-    respuesta.headers["Cross-Origin-Resource-Policy"] = "same-origin"
-    respuesta.headers["Cache-Control"] = "no-store"
-    return respuesta
-
-
-@app.route("/")
+@app.route('/')
 def inicio():
-    return (
-        "<h1>Tienda demo DevSecOps</h1>"
-        "<p>Buscar productos: <a href='/productos?nombre=Mouse'>/productos?nombre=Mouse</a></p>"
-    )
+    return jsonify({"mensaje": "API Demo DevSecOps - Version Corregida"})
 
-
-@app.route("/productos")
-def buscar_productos():
-    nombre = request.args.get("nombre", "")
-    # [FIX 2] Consulta parametrizada: el dato del usuario nunca se mezcla con el SQL
-    filas = db.execute(
-        "SELECT id, nombre, precio FROM productos WHERE nombre LIKE ?",
-        ("%" + nombre + "%",),
-    ).fetchall()
-    return jsonify([{"id": f[0], "nombre": f[1], "precio": f[2]} for f in filas])
-
-
-@app.route("/admin")
-def admin():
-    if not ADMIN_TOKEN or request.headers.get("X-Admin-Token") != ADMIN_TOKEN:
-        return jsonify({"error": "no autorizado"}), 401
-    total = db.execute("SELECT COUNT(*) FROM productos").fetchone()[0]
-    return jsonify({"productos_cargados": total})
-
-
-@app.route("/salud")
+@app.route('/salud')
 def salud():
-    return jsonify({"estado": "ok"})
+    return jsonify({"status": "ok"})
 
+@app.route('/buscar')
+def buscar():
+    q = request.args.get('q', '')
+    cursor = db_conn.cursor()
+    # Consulta parametrizada para evitar SQL Injection
+    cursor.execute("SELECT id, nombre, precio FROM productos WHERE nombre LIKE ?", (f"%{q}%",))
+    resultados = [{"id": row[0], "nombre": row[1], "precio": row[2]} for row in cursor.fetchall()]
+    return jsonify(resultados)
 
-if __name__ == "__main__":
-    # [FIX 3] Sin modo debug y solo en localhost (en el contenedor se usa gunicorn)
+@app.route('/admin')
+def admin():
+    auth_header = request.headers.get('Authorization')
+    admin_token = os.environ.get('ADMIN_TOKEN')
+    
+    if not admin_token or auth_header != f"Bearer {admin_token}":
+        return jsonify({"error": "No autorizado"}), 401
+        
+    return jsonify({"mensaje": "Bienvenido al panel de administracion"})
+
+if __name__ == '__main__':
+    # host='0.0.0.0' es imprescindible para responder en el puerto mapeado del contenedor Docker
     app.run(host='0.0.0.0', port=5000, debug=False)
