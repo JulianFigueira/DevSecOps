@@ -1,0 +1,153 @@
+# Pipeline DevSecOps - TPI ASI 2026 (UTN FRLP)
+# Etapas: analisis de codigo  |  imagen de contenedor  ->  DAST  ->  publicacion
+#
+# Seguridad del propio pipeline (leccion de Codecov 2021 y Trivy 2026):
+#  - Las acciones de terceros se fijan por hash de commit (SHA), no por tag.
+#  - Las herramientas que se ejecutan con Docker usan versiones fijas.
+#  - El token del workflow tiene permisos de solo lectura.
+
+name: devsecops-pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGEN: app-demo:${{ github.sha }}
+
+jobs:
+  # ------------------------------------------------------------------
+  # 1) Controles sobre el codigo fuente
+  # ------------------------------------------------------------------
+  analisis-codigo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Preparar carpeta de reportes
+        run: mkdir -p reportes
+
+      - name: "[Secretos] Gitleaks"
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/repo" zricethezav/gitleaks:v8.18.4 \
+            detect --source /repo --no-git --redact --verbose
+
+      - name: "[SAST] Bandit"
+        if: success() || failure()
+        run: |
+          pip install --quiet bandit==1.7.10
+          bandit -r app -ll -f txt -o reportes/bandit.txt || { cat reportes/bandit.txt; exit 1; }
+          cat reportes/bandit.txt
+
+      - name: "[SCA] Trivy - dependencias"
+        if: success() || failure()
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: "[IaC] Trivy - Dockerfile"
+        if: success() || failure()
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+
+      - name: Guardar reportes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reportes-codigo
+          path: reportes/
+
+  # ------------------------------------------------------------------
+  # 2) Construccion y escaneo de la imagen de contenedor + SBOM
+  # ------------------------------------------------------------------
+  imagen:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Construir imagen
+        run: docker build -t "$IMAGEN" .
+
+      - name: "[Contenedor] Trivy - escaneo de imagen"
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: ${{ env.IMAGEN }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: "[SBOM] Trivy - inventario CycloneDX"
+        if: success() || failure()
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: ${{ env.IMAGEN }}
+          format: cyclonedx
+          output: sbom.cdx.json
+
+      - name: Guardar SBOM
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.cdx.json
+
+  # ------------------------------------------------------------------
+  # 3) Analisis dinamico (DAST) con la aplicacion corriendo
+  #    Solo se ejecuta si pasaron los controles anteriores (quality gate)
+  # ------------------------------------------------------------------
+  dast:
+    needs: [analisis-codigo, imagen]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Levantar la aplicacion
+        run: |
+          docker build -t "$IMAGEN" .
+          docker run -d --name app -p 5000:5000 -e ADMIN_TOKEN=solo-para-pruebas "$IMAGEN"
+          for i in $(seq 1 20); do curl -fs http://localhost:5000/salud && break; sleep 2; done
+
+      - name: "[DAST] ZAP baseline"
+        run: |
+          mkdir -p zap && chmod 777 zap
+          docker run --rm --network host -v "$PWD/zap:/zap/wrk:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t http://localhost:5000 -r zap-reporte.html -I
+
+      - name: Guardar reporte de ZAP
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reporte-zap
+          path: zap/
+
+  # ------------------------------------------------------------------
+  # 4) Publicacion (simulada): solo llega aca si todo lo anterior paso
+  # ------------------------------------------------------------------
+  publicar:
+    needs: dast
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publicar version
+        run: |
+          echo "Todos los controles de seguridad pasaron."
+          echo "Aca se publicaria la imagen en un registro y se desplegaria."
