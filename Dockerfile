@@ -9,11 +9,11 @@ RUN apt-get update && apt-get upgrade -y && \
 # Crear usuario no root por seguridad
 RUN useradd -m appuser
 
-# Actualizar herramientas base y dependencias con vulnerabilidades reportadas por Trivy
-RUN pip install --no-cache-dir --upgrade pip "setuptools>=78.1.1" "urllib3>=2.8.0" "msgpack>=1.2.1"
-
 COPY app/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Forzar actualización a versiones seguras DESPUÉS de instalar requirements.txt
+RUN pip install --no-cache-dir --upgrade "setuptools>=78.1.1" "urllib3>=2.8.0" "msgpack>=1.2.1"
 
 COPY app/ .
 
