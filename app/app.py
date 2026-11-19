@@ -48,7 +48,7 @@ def admin():
     if not admin_token or auth_header != f"Bearer {admin_token}":
         return jsonify({"error": "No autorizado"}), 401
         
-    return jsonify({"mensaje": "Bienvenido al panel de administracion de la API DevSecOps"})
+    return jsonify({"mensaje": "Bienvenido al panel de administracion de la API DevSecOps del grupo 10"})
 
 if __name__ == '__main__':
     # host='0.0.0.0' es imprescindible para responder en el puerto mapeado del contenedor Docker
