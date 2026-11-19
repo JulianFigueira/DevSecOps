@@ -11,7 +11,7 @@ from flask import Flask, jsonify, request
 app = Flask(__name__)
 
 # [VULN 1] Credencial escrita en el codigo -> la detecta Gitleaks
-ADMIN_TOKEN = "tok_9f2Kx7LmQ4vR8nZ1wE6fyT3pBhJ5c"
+ADMIN_TOKEN = "tok_9f2Kx7LmQ4vRfs8nZ1wE6fyT3pBhJ5c"
 
 # Base de datos en memoria con datos de ejemplo
 db = sqlite3.connect(":memory:", check_same_thread=False)
