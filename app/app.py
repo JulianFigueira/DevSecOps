@@ -26,7 +26,7 @@ db.commit()
 @app.route("/")
 def inicio():
     return (
-        "<h1>Tienda demo DevSecOps</h1>"
+        "<h1>Tienda demo DevSecOps (vulnerable)</h1>"
         "<p>Buscar productos: <a href='/productos?nombre=Mouse'>/productos?nombre=Mouse</a></p>"
     )
 
