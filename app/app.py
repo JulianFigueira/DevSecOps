@@ -25,7 +25,7 @@ db_conn = init_db()
 
 @app.route('/')
 def inicio():
-    return jsonify({"mensaje": "API Demo DevSecOps - Version Corregida"})
+    return jsonify({"mensaje": "API Demo DevSecOps - Version Corregida - Segura"})
 
 @app.route('/salud')
 def salud():
