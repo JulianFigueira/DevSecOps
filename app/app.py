@@ -1,55 +1,58 @@
-import os
+"""
+Aplicacion de ejemplo para el TPI de DevSecOps (ASI 2026 - UTN FRLP).
+
+ATENCION: esta version contiene vulnerabilidades INTENCIONALES para que
+el pipeline las detecte. No usar en produccion.
+"""
 import sqlite3
-from flask import Flask, request, jsonify
+
+from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 
-def init_db():
-    conn = sqlite3.connect(':memory:', check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS productos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nombre TEXT NOT NULL,
-            precio REAL NOT NULL
-        )
-    ''')
-    cursor.execute("INSERT INTO productos (nombre, precio) VALUES ('Laptop', 1200.0)")
-    cursor.execute("INSERT INTO productos (nombre, precio) VALUES ('Mouse', 25.0)")
-    cursor.execute("INSERT INTO productos (nombre, precio) VALUES ('Teclado', 45.0)")
-    conn.commit()
-    return conn
+# [VULN 1] Credencial escrita en el codigo -> la detecta Gitleaks
+ADMIN_TOKEN = "tok_9f2Kx7LmQ4vRfs8nZ1wE6fyT3pBhJ5c"
 
-# Inicializar base de datos en memoria
-db_conn = init_db()
+# Base de datos en memoria con datos de ejemplo
+db = sqlite3.connect(":memory:", check_same_thread=False)
+db.execute("CREATE TABLE productos (id INTEGER PRIMARY KEY, nombre TEXT, precio REAL)")
+db.executemany(
+    "INSERT INTO productos (nombre, precio) VALUES (?, ?)",
+    [("Teclado", 25000), ("Mouse", 12000), ("Monitor", 180000), ("Notebook", 950000)],
+)
+db.commit()
 
-@app.route('/')
+
+@app.route("/")
 def inicio():
-    return jsonify({"mensaje": "API Demo DevSecOps - Version Corregida"})
+    return (
+        "<h1>Tienda demo DevSecOps (vulnerable)</h1>"
+        "<p>Buscar productos: <a href='/productos?nombre=Mouse'>/productos?nombre=Mouse</a></p>"
+    )
 
-@app.route('/salud')
-def salud():
-    return jsonify({"status": "ok"})
 
-@app.route('/buscar')
-def buscar():
-    q = request.args.get('q', '')
-    cursor = db_conn.cursor()
-    # Consulta parametrizada para evitar SQL Injection
-    cursor.execute("SELECT id, nombre, precio FROM productos WHERE nombre LIKE ?", (f"%{q}%",))
-    resultados = [{"id": row[0], "nombre": row[1], "precio": row[2]} for row in cursor.fetchall()]
-    return jsonify(resultados)
+@app.route("/productos")
+def buscar_productos():
+    nombre = request.args.get("nombre", "")
+    # [VULN 2] Consulta SQL armada concatenando texto -> la detecta Bandit (B608)
+    consulta = "SELECT id, nombre, precio FROM productos WHERE nombre LIKE '%" + nombre + "%'"
+    filas = db.execute(consulta).fetchall()
+    return jsonify([{"id": f[0], "nombre": f[1], "precio": f[2]} for f in filas])
 
-@app.route('/admin')
+
+@app.route("/admin")
 def admin():
-    auth_header = request.headers.get('Authorization')
-    admin_token = os.environ.get('ADMIN_TOKEN')
-    
-    if not admin_token or auth_header != f"Bearer {admin_token}":
-        return jsonify({"error": "No autorizado"}), 401
-        
-    return jsonify({"mensaje": "Bienvenido al panel de administracion"})
+    if request.headers.get("X-Admin-Token") != ADMIN_TOKEN:
+        return jsonify({"error": "no autorizado"}), 401
+    total = db.execute("SELECT COUNT(*) FROM productos").fetchone()[0]
+    return jsonify({"productos_cargados": total})
 
-if __name__ == '__main__':
-    # host='0.0.0.0' es imprescindible para responder en el puerto mapeado del contenedor Docker
-    app.run(host='0.0.0.0', port=5000, debug=False)  # nosec B104
+
+@app.route("/salud")
+def salud():
+    return jsonify({"estado": "ok"})
+
+
+if __name__ == "__main__":
+    # [VULN 3] Modo debug activado -> lo detecta Bandit (B201)
+    app.run(host="0.0.0.0", port=5000, debug=True)
